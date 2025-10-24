@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Snake.io - Neon Edition</title>
+<style>
+* {margin:0;padding:0;box-sizing:border-box;}
+body {background:#000;overflow:hidden;color:#0ff;font-family:'Courier New',monospace;}
+
+#gameCanvas {display:block;background:#000;cursor:none;}
+.hud {position:absolute;color:#0ff;text-shadow:0 0 10px #0ff,0 0 20px #0ff;
+    font-size:18px;padding:15px;background:rgba(0,0,0,0.7);border:2px solid #0ff;border-radius:5px;}
+#score {top:20px;left:20px;}
+#leaderboard {top:20px;right:20px;width:250px;}
+#leaderboard h3 {text-align:center;margin-bottom:10px;}
+#leaderboard ol {list-style:none;padding:0;}
+#leaderboard li {margin:3px 0;}
+#leaderboard li.player {color:#ff0;text-shadow:0 0 10px #ff0;}
+#minimap {bottom:20px;right:20px;width:200px;height:200px;border:2px solid #0ff;background:rgba(0,0,0,0.8);}
+#controls {bottom:20px;left:20px;font-size:14px;}
+#boostIndicator {position:absolute;top:0;left:0;right:0;bottom:0;border:5px solid #ff0;
+    display:none;pointer-events:none;box-shadow:inset 0 0 50px #ff0,0 0 50px #ff0;}
+
+#deathScreen, #startScreen {
+    position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+    background:rgba(0,0,0,0.9);border:3px solid #f0f;text-align:center;
+    padding:40px;box-shadow:0 0 50px #f0f;color:#0ff;
+}
+#deathScreen {display:none;}
+#deathScreen h1 {color:#f0f;text-shadow:0 0 20px #f0f;font-size:48px;margin-bottom:20px;}
+#deathScreen button, #startButton {
+    margin-top:20px;padding:15px 40px;font-size:20px;
+    font-family:'Courier New',monospace;background:transparent;color:#0ff;
+    border:2px solid #0ff;cursor:pointer;text-shadow:0 0 10px #0ff;transition:all .3s;
+}
+#deathScreen button:hover, #startButton:hover {
+    background:#0ff;color:#000;box-shadow:0 0 20px #0ff;
+}
+#startScreen input {
+    margin-top:10px;padding:10px;background:#000;border:1px solid #0ff;
+    color:#0ff;font-family:'Courier New',monospace;font-size:18px;text-align:center;
+}
+</style>
+</head>
+<body>
+<canvas id="gameCanvas"></canvas>
+<canvas id="minimap" class="hud"></canvas>
+
+<div id="score" class="hud">
+  <div>Length: <span id="lengthDisplay">10</span></div>
+  <div>Rank: <span id="rankDisplay">-</span></div>
+</div>
+
+<div id="leaderboard" class="hud">
+  <h3>TOP 10</h3>
+  <ol id="leaderboardList"></ol>
+</div>
+
+<div id="controls" class="hud">Move: MOUSE / ARROWS<br>Boost: SPACE</div>
+<div id="boostIndicator"></div>
+
+<div id="startScreen">
+  <h1>🐍 Snake.io - Neon Edition 🐍</h1>
+  <p>Enter your name:</p>
+  <input id="playerName" type="text" placeholder="Player" maxlength="15" />
+  <br>
+  <button id="startButton">START GAME</button>
+</div>
+
+<div id="deathScreen">
+  <h1>YOU DIED!</h1>
+  <p>Final Length: <span id="finalLength">0</span></p>
+  <p>Final Rank: <span id="finalRank">0</span></p>
+  <button id="respawnBtn">RESPAWN</button>
+</div>
+
+<script>
+const canvas=document.getElementById('gameCanvas'),ctx=canvas.getContext('2d'),
+      minimapCanvas=document.getElementById('minimap'),minimapCtx=minimapCanvas.getContext('2d');
+canvas.width=innerWidth;canvas.height=innerHeight;minimapCanvas.width=200;minimapCanvas.height=200;
+const ARENA=5000,SEG=15,BASE=3,BOOST=6,MINLEN=5,STARTLEN=10,FOODN=600,BOTN=15;
+const COLORS=['#0ff','#f0f','#ff0','#0f0','#f06','#00f','#f80'];
+const NAMES=['NeonViper','GlowWorm','ZapSnake','PlasmaCoil','LaserTail','CyberSerpent','VoltCrawler','RadiantWyrm','SynthSnake','PulseAdder'];
+let game=false,player=null,snakes=[],food=[],cam={x:0,y:0},mouseX=innerWidth/2,mouseY=innerHeight/2,keys={},playerName='YOU';
+
+class Snake{
+ constructor(x,y,isPlayer=false,name='',diff='medium'){
+  this.seg=[];this.isPlayer=isPlayer;this.name=name||(isPlayer?'YOU':this.randName());
+  this.color=this.randColor();this.spd=BASE;this.dir=Math.random()*Math.PI*2;
+  this.alive=true;this.diff=diff;this.target=null;this.cd=0;this.spawn=60;
+  for(let i=0;i<STARTLEN;i++)this.seg.push({x:x-i*SEG*Math.cos(this.dir),y:y-i*SEG*Math.sin(this.dir)});
+ }
+ randName(){return NAMES[Math.floor(Math.random()*NAMES.length)]+Math.floor(Math.random()*999);}
+ randColor(){return COLORS[Math.floor(Math.random()*COLORS.length)];}
+ get head(){return this.seg[0];}
+ get len(){return this.seg.length;}
+ get w(){return Math.min(8+Math.floor(this.len/10)*2,25);}
+ update(){
+  if(!this.alive)return;
+  if(!this.isPlayer)this.ai();
+  const h={x:this.head.x+Math.cos(this.dir)*this.spd,y:this.head.y+Math.sin(this.dir)*this.spd};
+  this.seg.unshift(h);if(!this.growFlag)this.seg.pop();else this.growFlag=false;
+  if(this.cd>0)this.cd--;if(this.spawn>0)this.spawn--;
+ }
+ ai(){
+  if(!this.target||Math.random()<0.03)this.target={x:Math.random()*ARENA,y:Math.random()*ARENA};
+  const p=snakes.find(s=>s.isPlayer&&s.alive);
+  if(p&&Math.random()<0.5)this.target={x:p.head.x,y:p.head.y};
+  const dx=this.target.x-this.head.x,dy=this.target.y-this.head.y,ang=Math.atan2(dy,dx);
+  let d=ang-this.dir;while(d>Math.PI)d-=2*Math.PI;while(d<-Math.PI)d+=2*Math.PI;this.dir+=d*0.1;
+  this.avoidWalls();this.avoidSnakes();
+  if(p&&this.diff!=='basic'){const dist=Math.hypot(p.head.x-this.head.x,p.head.y-this.head.y);
+    if(dist<600&&p.len<this.len&&this.cd===0){this.spd=BOOST;this.cd=40;}}
+  if(this.cd===0)this.spd=BASE;
+ }
+ avoidWalls(){
+  const m=200;if(this.head.x<m)this.dir=0;else if(this.head.x>ARENA-m)this.dir=Math.PI;
+  if(this.head.y<m)this.dir=Math.PI/2;else if(this.head.y>ARENA-m)this.dir=-Math.PI/2;
+ }
+ avoidSnakes(){
+  for(const o of snakes){if(o===this||!o.alive)continue;
+    const d=Math.hypot(this.head.x-o.head.x,this.head.y-o.head.y);
+    if(d<70){const a=Math.atan2(this.head.y-o.head.y,this.head.x-o.head.x);this.dir+=(a-this.dir)*0.3;}}
+ }
+ grow(){this.growFlag=true;}
+ checkCollision(){
+  if(this.spawn>0)return false;
+  if(this.head.x<0||this.head.x>ARENA||this.head.y<0||this.head.y>ARENA)return true;
+  for(const o of snakes){if(o===this||!o.alive)continue;
+   for(const s of o.seg){if(Math.hypot(this.head.x-s.x,this.head.y-s.y)<(this.w/2)+(o.w/2)*0.7)return true;}}
+  return false;
+ }
+ die(){this.alive=false;for(const s of this.seg){if(Math.random()<0.7)food.push({x:s.x,y:s.y});}}
+ draw(){
+  if(!this.alive)return;
+  ctx.shadowBlur=20;ctx.strokeStyle=this.color;ctx.lineWidth=this.w;ctx.beginPath();
+  ctx.moveTo(this.seg[0].x-cam.x,this.seg[0].y-cam.y);
+  for(let i=1;i<this.seg.length;i++)ctx.lineTo(this.seg[i].x-cam.x,this.seg[i].y-cam.y);
+  ctx.stroke();ctx.shadowBlur=0;ctx.fillStyle=this.color;
+  ctx.beginPath();ctx.arc(this.head.x-cam.x,this.head.y-cam.y,this.w/2,0,Math.PI*2);ctx.fill();
+  if(this.isPlayer){ctx.font='14px Courier New';ctx.textAlign='center';
+     ctx.fillText(this.name,this.head.x-cam.x,this.head.y-cam.y-this.w-10);}
+ }
+}
+
+function spawnFood(){food.push({x:Math.random()*ARENA,y:Math.random()*ARENA});}
+function safePos(){return {x:Math.random()*(ARENA-800)+400,y:Math.random()*(ARENA-800)+400};}
+
+function init(){
+ snakes=[];food=[];
+ const pos={x:ARENA/2,y:ARENA/2};
+ player=new Snake(pos.x,pos.y,true,playerName);snakes.push(player);
+ const dif=['basic','medium','advanced'];
+ for(let i=0;i<BOTN;i++){const p=safePos();snakes.push(new Snake(p.x,p.y,false,'',dif[i%dif.length]));}
+ for(let i=0;i<FOODN;i++)spawnFood();
+ document.getElementById('deathScreen').style.display='none';game=true;
+}
+
+function update(){
+ if(!game)return;
+ for(const s of snakes){s.update();if(s.checkCollision()){s.die();if(s.isPlayer){over();return;}}}
+ let dx=0,dy=0;
+ if(keys.ArrowUp)dy-=1;if(keys.ArrowDown)dy+=1;if(keys.ArrowLeft)dx-=1;if(keys.ArrowRight)dx+=1;
+ if(dx||dy){player.dir=Math.atan2(dy,dx);}
+ else{const mx=mouseX+cam.x-player.head.x,my=mouseY+cam.y-player.head.y;player.dir=Math.atan2(my,mx);}
+ if(keys[' ']){if(player.len>MINLEN){player.spd=BOOST;document.getElementById('boostIndicator').style.display='block';player.seg.pop();}}
+ else{player.spd=BASE;document.getElementById('boostIndicator').style.display='none';}
+ for(let i=food.length-1;i>=0;i--){for(const s of snakes){if(!s.alive)continue;
+  if(Math.hypot(s.head.x-food[i].x,s.head.y-food[i].y)<s.w){s.grow();food.splice(i,1);spawnFood();break;}}}
+ cam.x=player.head.x-canvas.width/2;cam.y=player.head.y-canvas.height/2;
+ cam.x=Math.max(0,Math.min(ARENA-canvas.width,cam.x));
+ cam.y=Math.max(0,Math.min(ARENA-canvas.height,cam.y));
+ ui();
+}
+
+function draw(){
+ ctx.fillStyle='#000';ctx.fillRect(0,0,canvas.width,canvas.height);
+ ctx.strokeStyle='#111';for(let x=-cam.x%100;x<canvas.width;x+=100){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,canvas.height);ctx.stroke();}
+ for(let y=-cam.y%100;y<canvas.height;y+=100){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(canvas.width,y);ctx.stroke();}
+ ctx.strokeStyle='#0ff';ctx.lineWidth=3;ctx.strokeRect(-cam.x,-cam.y,ARENA,ARENA);
+ ctx.fillStyle='#fff';ctx.shadowColor='#ff0';ctx.shadowBlur=10;
+ for(const f of food){ctx.beginPath();ctx.arc(f.x-cam.x,f.y-cam.y,6,0,Math.PI*2);ctx.fill();}
+ ctx.shadowBlur=0;
+ for(const s of snakes)s.draw();
+ mini();
+}
+
+function mini(){
+ const sc=minimapCanvas.width/ARENA;
+ minimapCtx.fillStyle='#000';minimapCtx.fillRect(0,0,minimapCanvas.width,minimapCanvas.height);
+ for(const s of snakes){if(!s.alive)continue;minimapCtx.fillStyle=s.isPlayer?'#ff0':s.color;
+  minimapCtx.fillRect(s.head.x*sc-2,s.head.y*sc-2,4,4);}
+ minimapCtx.strokeStyle='#fff';minimapCtx.strokeRect(cam.x*sc,cam.y*sc,canvas.width*sc,canvas.height*sc);
+}
+
+function ui(){
+ document.getElementById('lengthDisplay').textContent=player.len;
+ const arr=snakes.filter(s=>s.alive).sort((a,b)=>b.len-a.len);
+ const rank=arr.findIndex(s=>s.isPlayer)+1;
+ document.getElementById('rankDisplay').textContent=rank+'/'+arr.length;
+ const lb=document.getElementById('leaderboardList');lb.innerHTML='';
+ for(let i=0;i<Math.min(10,arr.length);i++){const li=document.createElement('li');
+  li.textContent=`${arr[i].name}: ${arr[i].len}`;if(arr[i].isPlayer)li.className='player';lb.appendChild(li);}
+}
+
+function over(){
+ game=false;
+ const arr=snakes.sort((a,b)=>b.len-a.len);
+ const rank=arr.findIndex(s=>s.isPlayer)+1;
+ document.getElementById('finalLength').textContent=player.len;
+ document.getElementById('finalRank').textContent=rank;
+ document.getElementById('deathScreen').style.display='block';
+}
+
+function loop(){update();draw();requestAnimationFrame(loop);}loop();
+
+canvas.onmousemove=e=>{mouseX=e.clientX;mouseY=e.clientY;};
+document.onkeydown=e=>{keys[e.key]=true;};
+document.onkeyup=e=>{keys[e.key]=false;};
+document.getElementById('respawnBtn').onclick=()=>{init();};
+window.onresize=()=>{canvas.width=innerWidth;canvas.height=innerHeight;};
+
+document.getElementById('startButton').onclick=()=>{
+ playerName=document.getElementById('playerName').value.trim()||'Player';
+ document.getElementById('startScreen').style.display='none';
+ init();
+};
+</script>
+</body>
+</html>
